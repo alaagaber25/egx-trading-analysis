@@ -19,9 +19,10 @@ class Indicators(BaseModel):
 class StockAnalysis(BaseModel):
     symbol: str
     price: float
-    indicators: Indicators
-    trend_analysis: Literal["bullish", "bearish", "neutral"]
-    risk_level: Literal["low", "medium", "high"]
+    indicators: Optional[Indicators] = None
+    trend_analysis: Optional[Literal["bullish", "bearish", "neutral"]] = None
+    risk_level: Optional[Literal["low", "medium", "high"]] = None
+    message: Optional[str] = None
 
 
 class PriceResponse(BaseModel):

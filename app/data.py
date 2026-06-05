@@ -9,35 +9,32 @@ logger = logging.getLogger(__name__)
 EGX_SUFFIX = ".CA"
 MIN_ROWS = 30
 
-# Some EGX tickers return bad data under their short symbol; map them to their ISIN ticker instead.
+# Tickers where the default <SYMBOL>.CA Yahoo Finance entry is a different company
+# or has corrupt data. Map to the correct yfinance ticker (e.g. the stock's ISIN).
 _SYMBOL_OVERRIDES: dict[str, str] = {
     "ORAS": "EGS95001C011",
+    "ORHD": "EGS70321C012",
 }
 
 
 def _resolve_ticker(symbol: str) -> str:
-    """Return the yfinance ticker string for a given EGX symbol."""
-    override = _SYMBOL_OVERRIDES.get(symbol.upper())
-    return override if override else f"{symbol}{EGX_SUFFIX}"
+    s = symbol.upper()
+    return _SYMBOL_OVERRIDES.get(s, f"{s}{EGX_SUFFIX}")
 
 
 def get_ohlcv(symbol: str, period: str = "2y") -> pd.DataFrame:
     ticker_symbol = _resolve_ticker(symbol)
     logger.info("Fetching OHLCV for %s period=%s", ticker_symbol, period)
 
-    df = yf.download(
-        ticker_symbol,
+    df = yf.Ticker(ticker_symbol).history(
         period=period,
         interval="1d",
-        progress=False,
         auto_adjust=True,
-        threads=False,
     )
 
     if df is None or df.empty:
         raise ValueError(f"No data returned for {ticker_symbol}")
 
-    # yfinance may return a MultiIndex when group_by or multiple tickers are used
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
@@ -47,8 +44,6 @@ def get_ohlcv(symbol: str, period: str = "2y") -> pd.DataFrame:
         raise ValueError(f"Missing OHLCV columns for {ticker_symbol}: {missing}")
 
     df = df[list(required)].copy()
-
-    # Drop rows where Close is NaN — those are unusable for any indicator
     df.dropna(subset=["Close"], inplace=True)
 
     if len(df) < MIN_ROWS:

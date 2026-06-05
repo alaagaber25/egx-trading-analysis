@@ -137,8 +137,21 @@ def analyze_stock(
     try:
         df = get_ohlcv(symbol, period=period)
     except ValueError as exc:
-        logger.warning("Data unavailable for %s: %s", symbol, exc)
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("No historical data for %s (%s) — returning price-only", symbol, exc)
+        try:
+            price_data = get_price_info(symbol)
+            price_val = price_data.get("price") or 0.0
+        except Exception:
+            price_val = 0.0
+        return StockAnalysis(
+            symbol=symbol,
+            price=price_val,
+            message=(
+                "Insufficient historical data available for this stock on Yahoo Finance. "
+                "Only the live price is shown. Technical analysis (indicators, trend, risk) "
+                "cannot be performed."
+            ),
+        )
     except Exception as exc:
         logger.error("Data fetch failed for %s: %s", symbol, exc, exc_info=True)
         raise HTTPException(status_code=502, detail=f"Data fetch failed: {exc}")
