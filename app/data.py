@@ -9,9 +9,20 @@ logger = logging.getLogger(__name__)
 EGX_SUFFIX = ".CA"
 MIN_ROWS = 30
 
+# Some EGX tickers return bad data under their short symbol; map them to their ISIN ticker instead.
+_SYMBOL_OVERRIDES: dict[str, str] = {
+    "ORAS": "EGS95001C011",
+}
+
+
+def _resolve_ticker(symbol: str) -> str:
+    """Return the yfinance ticker string for a given EGX symbol."""
+    override = _SYMBOL_OVERRIDES.get(symbol.upper())
+    return override if override else f"{symbol}{EGX_SUFFIX}"
+
 
 def get_ohlcv(symbol: str, period: str = "2y") -> pd.DataFrame:
-    ticker_symbol = f"{symbol}{EGX_SUFFIX}"
+    ticker_symbol = _resolve_ticker(symbol)
     logger.info("Fetching OHLCV for %s period=%s", ticker_symbol, period)
 
     df = yf.download(
@@ -50,7 +61,7 @@ def get_ohlcv(symbol: str, period: str = "2y") -> pd.DataFrame:
 
 
 def get_price_info(symbol: str) -> dict:
-    ticker_symbol = f"{symbol}{EGX_SUFFIX}"
+    ticker_symbol = _resolve_ticker(symbol)
     logger.info("Fetching fast_info for %s", ticker_symbol)
 
     ticker = yf.Ticker(ticker_symbol)
