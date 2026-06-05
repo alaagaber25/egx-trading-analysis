@@ -3,8 +3,10 @@ import re
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Path, Query
+from fastapi import FastAPI, HTTPException, Path, Query, Request
+from fastapi.responses import Response
 from fastapi_mcp import FastApiMCP
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from app.analysis import interpret_risk, interpret_trend
 from app.data import get_ohlcv, get_price_info
@@ -22,6 +24,8 @@ VERSION = "1.0.0"
 _SYMBOL_RE = re.compile(r"^[A-Z]{2,6}$")
 VALID_PERIODS = {"1mo", "3mo", "6mo", "1y", "2y"}
 
+_mcp_session_manager: StreamableHTTPSessionManager | None = None
+
 
 def _validate_symbol(symbol: str) -> str:
     s = symbol.upper().strip()
@@ -35,8 +39,15 @@ def _validate_symbol(symbol: str) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _mcp_session_manager
     logger.info("EGX Trading Analysis API v%s starting", VERSION)
-    yield
+    _mcp_session_manager = StreamableHTTPSessionManager(
+        app=mcp.server,
+        stateless=True,
+        json_response=True,
+    )
+    async with _mcp_session_manager.run():
+        yield
     logger.info("EGX Trading Analysis API shutting down")
 
 
@@ -191,4 +202,26 @@ mcp = FastApiMCP(
     describe_all_responses=True,
     describe_full_response_schema=True,
 )
-mcp.mount_http()  # Mounts at /mcp — Claude Desktop connects to http://<host>/mcp
+
+@app.api_route("/mcp", methods=["GET", "POST", "DELETE"], include_in_schema=False)
+async def handle_mcp(request: Request) -> Response:
+    if _mcp_session_manager is None:
+        raise HTTPException(status_code=503, detail="MCP not ready")
+    status = 200
+    resp_headers: list = []
+    body = b""
+
+    async def send(message):
+        nonlocal status, resp_headers, body
+        if message["type"] == "http.response.start":
+            status = message["status"]
+            resp_headers = message.get("headers", [])
+        elif message["type"] == "http.response.body":
+            body += message.get("body", b"")
+
+    await _mcp_session_manager.handle_request(request.scope, request.receive, send)
+    return Response(
+        content=body,
+        status_code=status,
+        headers={k.decode(): v.decode() for k, v in resp_headers},
+    )
