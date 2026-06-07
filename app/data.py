@@ -9,25 +9,51 @@ logger = logging.getLogger(__name__)
 EGX_SUFFIX = ".CA"
 MIN_ROWS = 30
 
-# Tickers where the default <SYMBOL>.CA Yahoo Finance entry is a different company
-# or has corrupt data. Map to the correct yfinance ticker (e.g. the stock's ISIN).
-_SYMBOL_OVERRIDES: dict[str, str] = {
-    "ORAS": "EGS95001C011",
-    "ORHD": "EGS70321C012",
-    "TWSA": "EGS7D231C010",
-    "EAGL": "EGS3E181C010",
-    "MFPC": "EGS39061C014",
-    "MPCI": "EGS38351C010",
+# EGX symbols whose plain <SYMBOL>.CA Yahoo listing is unusable for analysis:
+#   - ORAS: <SYM>.CA is a DIFFERENT instrument (EGP 71 vs the real EGP 742 equity)
+#   - TWSA, EAGL: <SYM>.CA does not exist on Yahoo at all
+# The correct company is only reachable via its ISIN-style ticker, which Yahoo
+# serves as an INTRADAY-ONLY quote symbol (validRanges ['1d','5d'], no daily
+# backfill). So for these we use the ISIN for the live quote and skip technical
+# analysis — there is no reliable daily history on Yahoo for them.
+#
+# Do NOT add a symbol here just because its quoteType is MUTUALFUND or its name
+# looks generic — that is a universal Yahoo quirk for EGX and those <SYM>.CA
+# tickers DO carry full daily history (e.g. FWRY, COMI, ORHD, MFPC, MPCI). Only
+# add a symbol whose <SYM>.CA last close does not match the real share price, or
+# whose <SYM>.CA listing is missing. Map it to "<ISIN>.CA".
+_QUOTE_ONLY_OVERRIDES: dict[str, str] = {
+    "ORAS": "EGS95001C011.CA",
+    "TWSA": "EGS7D231C010.CA",
+    "EAGL": "EGS3E181C010.CA",
 }
 
 
-def _resolve_ticker(symbol: str) -> str:
+def resolve_history_ticker(symbol: str) -> str:
+    """Ticker to use for daily OHLCV history. Always the short <SYM>.CA form —
+    EGX daily history on Yahoo lives only under this symbol, never the ISIN."""
+    return f"{symbol.upper()}{EGX_SUFFIX}"
+
+
+def resolve_quote_ticker(symbol: str) -> str:
+    """Ticker to use for the live price quote. Uses the ISIN override where the
+    plain <SYM>.CA listing is the wrong instrument or missing."""
     s = symbol.upper()
-    return _SYMBOL_OVERRIDES.get(s, f"{s}{EGX_SUFFIX}")
+    return _QUOTE_ONLY_OVERRIDES.get(s, f"{s}{EGX_SUFFIX}")
 
 
 def get_ohlcv(symbol: str, period: str = "2y") -> pd.DataFrame:
-    ticker_symbol = _resolve_ticker(symbol)
+    sym = symbol.upper()
+
+    if sym in _QUOTE_ONLY_OVERRIDES:
+        # Yahoo has no daily history for these (quote-only ISIN symbol), and the
+        # plain <SYM>.CA listing is a different instrument. Refuse rather than
+        # silently analyze the wrong data — the caller falls back to price-only.
+        raise ValueError(
+            f"No reliable daily history on Yahoo for {sym}: quote-only symbol"
+        )
+
+    ticker_symbol = resolve_history_ticker(sym)
     logger.info("Fetching OHLCV for %s period=%s", ticker_symbol, period)
 
     df = yf.Ticker(ticker_symbol).history(
@@ -60,7 +86,7 @@ def get_ohlcv(symbol: str, period: str = "2y") -> pd.DataFrame:
 
 
 def get_price_info(symbol: str) -> dict:
-    ticker_symbol = _resolve_ticker(symbol)
+    ticker_symbol = resolve_quote_ticker(symbol)
     logger.info("Fetching fast_info for %s", ticker_symbol)
 
     ticker = yf.Ticker(ticker_symbol)
