@@ -26,6 +26,7 @@ _QUOTE_ONLY_OVERRIDES: dict[str, str] = {
     "ORAS": "EGS95001C011.CA",
     "TWSA": "EGS7D231C010.CA",
     "EAGL": "EGS3E181C010.CA",
+    "TMGH": "EGS691S1C011",
 }
 
 
